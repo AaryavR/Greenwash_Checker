@@ -1,6 +1,5 @@
 fastapi
 uvicorn
 python-multipart
-google-generativeai
-groq
 python-dotenv
+groq>=0.5.0

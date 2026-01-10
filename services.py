@@ -1,19 +1,14 @@
 import os
 import json
+import base64
 import asyncio
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from groq import Groq
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # --- CONFIG ---
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
-# USE THE MODEL FROM YOUR LIST (Lite version = Higher Limits)
-GOOGLE_MODEL_NAME = 'gemini-2.0-flash-lite-preview-02-05'
 
 # --- PROMPTS ---
 ANALYZER_PROMPT = """
@@ -29,37 +24,48 @@ Output strictly valid JSON:
 TIEBREAKER_PROMPT = """
 Decide based on ENVIRONMENTAL IMPACT.
 Item: {item}
-AI 1: {status_a}
-AI 2: {status_b}
+AI 1 (Llama): {status_a}
+AI 2 (Mixtral): {status_b}
 Output JSON: { "final_status": "RED/YELLOW/GREEN", "final_explanation": "Ruling" }
 """
 
 WITTY_SUMMARY_PROMPT = """
 You are a sarcastic environmental activist. 
-Write a ONE-LINE summary.
-- Greenwashing: Roast them.
-- Sustainable: Be skeptical but impressed.
+Write a ONE-LINE summary of this product based on these ingredients.
+- If it's greenwashing: Roast them ruthlessly.
+- If it's sustainable: Be impressed.
 - Keep it under 20 words.
 """
 
-# --- 1. VISION ---
+# --- 1. VISION (Groq Llama 3.2 Vision) ---
 async def extract_text_from_image(image_file):
-    print(f"--- Vision: Using {GOOGLE_MODEL_NAME} ---")
-    model = genai.GenerativeModel(GOOGLE_MODEL_NAME)
+    print("--- Vision: Using Groq Llama 3.2 ---")
     image_data = await image_file.read()
+    base64_image = base64.b64encode(image_data).decode('utf-8')
     
-    prompt = "Extract ingredients and claims. Return JSON: {'ingredients': [], 'claims': []}"
+    prompt = "Extract ingredients and Green claims. Return ONLY raw JSON: {'ingredients': [], 'claims': []}"
     
     try:
-        response = model.generate_content([prompt, {'mime_type': image_file.content_type, 'data': image_data}])
-        text = response.text.replace("```json", "").replace("```", "").strip()
-        return json.loads(text)
+        completion = groq_client.chat.completions.create(
+            model="llama-3.2-90b-vision-preview",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}},
+                    ],
+                }
+            ],
+            temperature=0,
+            response_format={"type": "json_object"}
+        )
+        return json.loads(completion.choices[0].message.content)
     except Exception as e:
         print(f"!!! VISION ERROR: {e}")
-        # Fallback: Return empty so the app doesn't crash, just says "No data"
         return {"ingredients": [], "claims": ["Error reading image"]}
 
-# --- 2. ANALYZERS (FAIL-SAFE) ---
+# --- 2. ANALYZERS (Two Different Brains) ---
 async def analyze_ingredients_parallel(data):
     ingredients = data.get("ingredients", [])
     claims = data.get("claims", [])
@@ -69,92 +75,109 @@ async def analyze_ingredients_parallel(data):
 
     text_input = f"Analyze: {all_items}"
     
-    # Run Parallel - IF GOOGLE FAILS, IT WON'T KILL THE APP
-    task1 = asyncio.to_thread(call_gemini_analyzer, text_input)
-    task2 = asyncio.to_thread(call_groq_analyzer, text_input)
+    # --- THE DUAL AI CHECK ---
+    # Task 1: Llama 3 (70 Billion Parameters) - The "Smart" one
+    task1 = asyncio.to_thread(call_ai_model, "llama3-70b-8192", text_input, all_items)
     
-    # return_exceptions=True prevents one crash from stopping the other
-    results = await asyncio.gather(task1, task2, return_exceptions=True)
+    # Task 2: Mixtral 8x7B - The "Diverse" one (Different logic structure)
+    task2 = asyncio.to_thread(call_ai_model, "mixtral-8x7b-32768", text_input, all_items)
     
-    result_a = results[0] if not isinstance(results[0], Exception) else {}
-    result_b = results[1] if not isinstance(results[1], Exception) else {}
+    # Run them at the same time
+    result_a, result_b = await asyncio.gather(task1, task2)
     
-    if isinstance(results[0], Exception): print(f"⚠️ Google Analyzer Failed: {results[0]}")
-
+    # Compare their answers
     final_results = await merge_and_judge(all_items, result_a, result_b)
-    summary = await generate_witty_summary(final_results)
     
+    summary = await generate_witty_summary(final_results)
     return final_results, summary
 
-def call_gemini_analyzer(content):
-    model = genai.GenerativeModel(GOOGLE_MODEL_NAME)
-    response = model.generate_content(
-        ANALYZER_PROMPT + "\nInput: " + content,
-        generation_config={"response_mime_type": "application/json"}
-    )
-    return json.loads(response.text)
-
-def call_groq_analyzer(content):
-    # Groq is our Safety Net. It rarely fails.
-    completion = groq_client.chat.completions.create(
-        model="llama3-70b-8192",
-        messages=[{"role": "system", "content": ANALYZER_PROMPT}, {"role": "user", "content": content}],
-        temperature=0, response_format={"type": "json_object"}
-    )
-    return json.loads(completion.choices[0].message.content)
+def call_ai_model(model_name, content, all_items):
+    try:
+        completion = groq_client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "system", "content": ANALYZER_PROMPT}, {"role": "user", "content": content}],
+            temperature=0, 
+            response_format={"type": "json_object"}
+        )
+        analysis_dict = json.loads(completion.choices[0].message.content)
+        
+        # Normalize the output to list format
+        report = {}
+        for item in all_items:
+            # Flexible matching (AI often returns slightly different keys)
+            found_data = None
+            for key, val in analysis_dict.items():
+                if item.lower() in key.lower() or key.lower() in item.lower():
+                    found_data = val
+                    break
+            
+            if found_data:
+                report[item] = {
+                    "status": found_data.get("status", "YELLOW"),
+                    "explanation": found_data.get("explanation", "Analyzed")
+                }
+        return report
+    except Exception as e: 
+        print(f"{model_name} Error: {e}")
+        return {}
 
 # --- 3. CONSENSUS ---
 async def merge_and_judge(all_items, analysis_a, analysis_b):
     final_report = []
+    
     for item in all_items:
-        a = analysis_a.get(item)
-        b = analysis_b.get(item)
+        a = analysis_a.get(item) # Llama's opinion
+        b = analysis_b.get(item) # Mixtral's opinion
         
-        # If Google Failed (Empty A), use Groq (B)
+        # Fail-Safe: If one AI crashed, trust the other completely
         if not a: a = b
-        # If Groq Failed (Empty B), use Google (A)
         if not b: b = a
-        
-        if not a: continue # If both failed, skip
+        if not a: continue 
 
+        # If they AGREE -> Verified!
         if a['status'] == b['status']:
-            final_report.append({"name": item, "status": a['status'], "explanation": a['explanation']})
+            final_report.append({
+                "name": item,
+                "status": a['status'],
+                "explanation": a['explanation'],
+                "consensus": True # Verified by 2 AIs
+            })
+        # If they DISAGREE -> Tiebreaker
         else:
+            print(f"CONFLICT on {item}: Llama says {a['status']}, Mixtral says {b['status']}")
             ruling = await call_tiebreaker(item, a, b)
-            final_report.append({"name": item, "status": ruling['final_status'], "explanation": ruling['final_explanation']})
+            final_report.append({
+                "name": item,
+                "status": ruling['final_status'],
+                "explanation": ruling['final_explanation'],
+                "consensus": False # The Judge had to intervene
+            })
     return final_report
 
 async def call_tiebreaker(item, a, b):
-    model = genai.GenerativeModel(GOOGLE_MODEL_NAME)
+    # The Judge is Llama 3 (it has the highest IQ for reasoning)
     prompt = TIEBREAKER_PROMPT.format(item=item, status_a=a['status'], status_b=b['status'])
     try:
-        response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
-        return json.loads(response.text)
+        completion = groq_client.chat.completions.create(
+            model="llama3-70b-8192",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            response_format={"type": "json_object"}
+        )
+        return json.loads(completion.choices[0].message.content)
     except: 
-        # If Judge fails, default to Caution
-        return {"final_status": "YELLOW", "final_explanation": "Judge unavailable (Quota Limit)."}
+        return {"final_status": "YELLOW", "final_explanation": "Judge unavailable."}
 
 # --- 4. SUMMARY ---
 async def generate_witty_summary(final_results):
-    model = genai.GenerativeModel(GOOGLE_MODEL_NAME)
-    
     if not final_results: return "I couldn't read the label."
-
     context = str([f"{r['name']}: {r['status']}" for r in final_results])
-    
-    safety_settings = {
-        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-    }
-
     try:
-        response = model.generate_content(
-            WITTY_SUMMARY_PROMPT + f"\nData: {context}",
-            safety_settings=safety_settings
+        completion = groq_client.chat.completions.create(
+            model="llama3-70b-8192",
+            messages=[{"role": "system", "content": WITTY_SUMMARY_PROMPT}, {"role": "user", "content": f"Data: {context}"}],
+            temperature=0.7 
         )
-        return response.text.strip()
-    except Exception as e:
-        print(f"⚠️ Summary Failed: {e}")
-        return "I'm speechless (literally, the API crashed)."
+        return completion.choices[0].message.content.strip()
+    except:
+        return "The AI is speechless."
