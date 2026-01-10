@@ -175,4 +175,4 @@ async def generate_witty_summary(final_results):
         )
         return completion.choices[0].message.content.strip()
     except:
-        return "The AI is speechless."
+        return "The AI is speechless." 
