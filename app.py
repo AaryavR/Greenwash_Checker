@@ -8,71 +8,80 @@ load_dotenv()
 
 # --- 1. UI CONFIGURATION ---
 st.set_page_config(
-    page_title="EcoScan | Multi-Category Auditor",
+    page_title="EcoScan",
     page_icon="🌿",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed" # Hide default sidebar
 )
 
-# --- CUSTOM CSS (The UI Magic) ---
+# --- CUSTOM CSS (Mobile App Layout) ---
 st.markdown("""
 <style>
     /* 1. APP THEME */
-    .stApp { background-color: #0f1715; color: #e2e8f0; }
+    .stApp { background-color: #0f1715; color: #e2e8f0; padding-bottom: 120px; } /* Padding for bottom bar */
     h1, h2, h3 { color: #10b981 !important; font-family: 'Courier New', monospace; }
     
-    /* 2. SIDEBAR STYLING (Bottom Dock) */
-    [data-testid="stSidebar"] {
-        background-color: #0f1715;
-        border-right: 1px solid #1a2624;
-    }
-    
-    /* This flex trick pushes the uploader to the bottom of the sidebar */
-    [data-testid="stSidebarUserContent"] {
+    /* 2. HIDE DEFAULT ELEMENTS */
+    [data-testid="stSidebar"] { display: none; } /* Hide the actual sidebar */
+    #MainMenu { visibility: hidden; }
+    footer { visibility: hidden; }
+
+    /* 3. FLOATING BOTTOM DOCK */
+    .bottom-dock {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        background: #1a2624; /* Dark Bar Background */
+        border-top: 1px solid #10b981;
+        padding: 10px 20px;
+        z-index: 9999;
         display: flex;
-        flex-direction: column;
-        justify-content: flex-end; 
-        height: 85vh; /* Force height to push items down */
+        justify-content: center;
+        align-items: center;
+        box-shadow: 0 -5px 20px rgba(0,0,0,0.5);
     }
 
-    /* 3. FILE UPLOADER STYLING (Minimalist Icon Look) */
-    [data-testid="stFileUploader"] {
-        width: 100%;
-        margin-bottom: 20px;
-    }
-    
-    /* Style the internal button of the uploader */
-    [data-testid="stFileUploader"] button {
-        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-        color: white;
-        border: none;
-        border-radius: 50px; /* Rounded pill shape */
-        padding: 15px 20px;
-        font-weight: bold;
-        width: 100%;
-        transition: transform 0.2s;
-    }
-    [data-testid="stFileUploader"] button:hover {
-        transform: scale(1.02);
-        box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
-    }
-    
-    /* Hide the "Drag and drop file here" text to make it clean */
-    [data-testid="stFileUploader"] .uploadedFile {
-        display: none;
-    }
-    [data-testid="stFileUploader"] small {
-        display: none;
+    /* 4. TRANSFORM FILE UPLOADER INTO A BUTTON */
+    /* This targets the specific widget container we will place at the bottom */
+    div.stFileUploader {
+        position: fixed;
+        bottom: 15px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 80px; /* Small width for icon */
+        height: 80px;
+        z-index: 10000;
+        opacity: 0.9;
     }
 
-    /* 4. DASHBOARD ELEMENTS */
-    div[data-testid="stMetricValue"] { font-family: 'Courier New', monospace; color: #10b981; }
-    .streamlit-expanderHeader { background-color: #1a2624; color: #e2e8f0; }
+    /* Style the inner button to look like a Shutter/Scan Icon */
+    div.stFileUploader > label { display: none; } /* Hide label text */
+    div.stFileUploader button {
+        background: #10b981 !important; /* Green Circle */
+        color: white !important;
+        border: 4px solid #0f1715 !important;
+        border-radius: 50% !important;
+        width: 70px !important;
+        height: 70px !important;
+        font-size: 30px !important;
+        line-height: 70px !important;
+        padding: 0 !important;
+        box-shadow: 0 0 20px rgba(16, 185, 129, 0.6);
+        transition: transform 0.1s;
+    }
+    div.stFileUploader button:active {
+        transform: scale(0.9);
+    }
     
-    /* Custom Badges */
-    .badge-red { background-color: #ef4444; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold; }
-    .badge-yellow { background-color: #f59e0b; color: black; padding: 4px 8px; border-radius: 4px; font-weight: bold; }
-    .badge-green { background-color: #10b981; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold; }
-    
+    /* Hide the 'Drag and Drop' text mess */
+    div.stFileUploader section {
+        background: transparent !important;
+        border: none !important;
+    }
+    div.stFileUploader .uploadedFile { display: none; } /* Hide file name after upload */
+
+    /* 5. DASHBOARD STYLING */
     .legend-box {
         background-color: #1a2624;
         padding: 15px;
@@ -81,29 +90,38 @@ st.markdown("""
         margin-bottom: 20px;
         font-size: 0.9rem;
     }
+    .badge-red { background-color: #ef4444; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold; }
+    .badge-yellow { background-color: #f59e0b; color: black; padding: 4px 8px; border-radius: 4px; font-weight: bold; }
+    .badge-green { background-color: #10b981; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. SIDEBAR (The "Icon on Bottom") ---
-with st.sidebar:
-    # We add a title at the top, but the uploader will be pushed to bottom by CSS
-    st.markdown("### ⚙️ EcoScan Controls")
-    st.info("Supported: Food, Cosmetics, Cleaning Supplies")
-    
-    # The Uploader (Pushed to bottom by CSS flex-end)
-    st.markdown("---") # Divider line
-    uploaded_file = st.file_uploader("📷 Scan Product Label", type=["jpg", "png", "jpeg"], label_visibility="collapsed")
-
-
-# --- 3. MAIN APP LOGIC ---
+# --- 2. MAIN HEADER ---
 st.title("EcoScan v2.1 🌐")
 st.caption("Universal Multi-Category Product Auditor")
 
-# Trigger Logic only if file is uploaded
-if uploaded_file is not None:
-    # Automatically show a spinner and run logic once file is there
-    # (No need for extra "Initiate" button anymore, makes it smoother like an app)
-    
+# --- 3. THE FLOATING UPLOADER (THE "ICON") ---
+# We place this here, but CSS moves it to the bottom center
+uploaded_file = st.file_uploader("Scan", type=["jpg", "png", "jpeg"], label_visibility="collapsed")
+
+# Inject a fake "Dock" background for visuals
+st.markdown('<div class="bottom-dock"></div>', unsafe_allow_html=True)
+
+
+# --- 4. APP LOGIC ---
+
+# LANDING STATE (When no file)
+if uploaded_file is None:
+    st.markdown("""
+    <div style="text-align: center; margin-top: 50px; opacity: 0.7;">
+        <h3>Ready to Audit</h3>
+        <p>Tap the Green Button below to scan a label.</p>
+        <br>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ANALYSIS STATE (When file exists)
+else:
     # --- PHASE 1: VISION & CATEGORY ---
     with st.status("Analyzing Visual Data...", expanded=True) as status:
         st.write("📸 Extracting features...")
@@ -146,8 +164,8 @@ if uploaded_file is not None:
     <div class="legend-box">
         <strong>🚦 RATING GUIDE:</strong><br>
         <span style="color:#ef4444">🔴 <strong>RED (Hazard/False):</strong></span> Toxic ingredients or outright lies.<br>
-        <span style="color:#f59e0b">🟡 <strong>YELLOW (Caution/Vague):</strong></span> Unregulated terms (e.g. "Natural") or moderate impact.<br>
-        <span style="color:#10b981">🟢 <strong>GREEN (Safe/Verified):</strong></span> Certified sustainable or beneficial.
+        <span style="color:#f59e0b">🟡 <strong>YELLOW (Caution/Vague):</strong></span> Unregulated terms or moderate impact.<br>
+        <span style="color:#10b981">🟢 <strong>GREEN (Safe/Verified):</strong></span> Certified sustainable.
     </div>
     """, unsafe_allow_html=True)
     
@@ -180,20 +198,17 @@ if uploaded_file is not None:
     st.divider()
     st.subheader("📢 Claims Intel")
     claims_data = scores.get("claims_breakdown", [])
-    
     if not claims_data:
-        st.info("No marketing claims detected to analyze.")
+        st.info("No marketing claims detected.")
     else:
         for item in claims_data:
             status = item.get("status", "YELLOW").upper()
             claim_text = item.get("claim", "Unknown Claim")
             verdict = item.get("verdict", "UNVERIFIED")
             explanation = item.get("explanation", "No details.")
-
             if status == "RED": icon = "🔴"
             elif status == "GREEN": icon = "🟢"
             else: icon = "🟡"
-
             with st.expander(f"{icon} Claim: \"{claim_text}\""):
                 st.markdown(f"**Verdict:** {verdict}")
                 st.write(f"**Analysis:** {explanation}")
@@ -201,7 +216,6 @@ if uploaded_file is not None:
     # --- INGREDIENTS SECTION ---
     st.divider()
     st.subheader("🧪 Ingredient Intel")
-    
     ingredient_list = scores.get("ingredient_breakdown", [])
     if not ingredient_list:
         st.info("No detailed ingredient analysis returned.")
@@ -210,18 +224,14 @@ if uploaded_file is not None:
             status = item.get("status", "YELLOW").upper()
             name = item.get("name", "Unknown")
             explanation = item.get("explanation", "No details.")
-            alternative = item.get("alternative", "None suggestion.")
-            
+            alternative = item.get("alternative", "None.")
             if status == "RED": icon = "🔴"
             elif status == "GREEN": icon = "🟢"
             else: icon = "🟡"
-            
             with st.expander(f"{icon} {name}"):
                 st.markdown(f"**Impact:** {explanation}")
                 if alternative and alternative != "None":
                     st.success(f"**Better Choice:** {alternative}")
-
-else:
-    # Landing Page State
-    st.markdown("### ⬅️ Ready to Scan")
-    st.write("Use the camera button in the sidebar to begin.")
+    
+    # Extra spacing for bottom bar
+    st.write("<br><br><br>", unsafe_allow_html=True)
