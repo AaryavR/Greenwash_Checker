@@ -73,7 +73,7 @@ st.title("EcoScan 🌐")
 st.caption("Universal Multi-Category Product Auditor")
 
 if uploaded_file is not None:
-    if st.button("🚀 INITIATE AUDIT", use_container_width=True):
+    if st.button("🚀 ANALYSE", use_container_width=True):
         
         # --- PHASE 1: VISION & CATEGORY ---
         with st.status("Analyzing Visual Data...", expanded=True) as status:
