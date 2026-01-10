@@ -37,9 +37,9 @@ Write a ONE-LINE summary of this product based on these ingredients.
 - Keep it under 20 words.
 """
 
-# --- 1. VISION (Updated to 11B Vision) ---
+# --- 1. VISION (Llama 4 Scout - The New Vision Model) ---
 async def extract_text_from_image(image_file):
-    print("--- Vision: Using Groq Llama 3.2 (11B) ---")
+    print("--- Vision: Using Groq Llama 4 Scout ---")
     image_data = await image_file.read()
     base64_image = base64.b64encode(image_data).decode('utf-8')
     
@@ -47,8 +47,8 @@ async def extract_text_from_image(image_file):
     
     try:
         completion = groq_client.chat.completions.create(
-            # UPDATED MODEL ID
-            model="llama-3.2-11b-vision-preview",
+            # UPDATED: The new valid vision model ID
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
             messages=[
                 {
                     "role": "user",
@@ -64,6 +64,7 @@ async def extract_text_from_image(image_file):
         return json.loads(completion.choices[0].message.content)
     except Exception as e:
         print(f"!!! VISION ERROR: {e}")
+        # Fallback for error handling
         return {"ingredients": [], "claims": ["Error reading image"]}
 
 # --- 2. ANALYZERS (Two Different Brains) ---
