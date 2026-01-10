@@ -20,92 +20,105 @@ st.markdown("""
     .stApp { background-color: #0f1715; color: #e2e8f0; }
     h1, h2, h3 { color: #10b981 !important; font-family: 'Courier New', monospace; }
     
-    /* 2. CLEANER SIDEBAR */
+    /* 2. SIDEBAR STYLING */
     [data-testid="stSidebar"] {
         background-color: #0f1715;
         border-right: 1px solid #1a2624;
     }
-
-    /* 3. PUSH UPLOADER TO BOTTOM OF SIDEBAR */
-    /* We make the sidebar a flex container so we can push the button down */
+    
+    /* 3. PUSH CONTENT TO BOTTOM OF SIDEBAR */
+    /* We effectively turn the sidebar into a flex container */
     [data-testid="stSidebarUserContent"] {
         display: flex;
         flex-direction: column;
-        height: 90vh; /* Use viewport height to space things out */
+        height: 100%;
     }
     
-    /* This class will be applied to a spacer div to push content down */
+    /* This invisible spacer takes up all available height, pushing the uploader down */
     .sidebar-spacer {
-        flex-grow: 1;
+        flex-grow: 1; 
+        min-height: 50vh; 
     }
 
-    /* 4. STYLE THE FILE UPLOADER AS A BUTTON */
+    /* 4. FILE UPLOADER TRANSFORMATION */
     [data-testid="stFileUploader"] {
         width: 100%;
-        padding-bottom: 20px;
+        padding-bottom: 30px; /* Space from bottom edge */
     }
     
-    /* Hide the annoying "Drag and drop file here" text and limit text */
+    /* Hide the 'Limit 200MB' and file name text */
+    [data-testid="stFileUploader"] small { display: none; }
+    [data-testid="stFileUploader"] .uploadedFile { display: none; }
+    
+    /* Hide the 'Drag and drop' text container */
     [data-testid="stFileUploader"] section {
-        padding: 0;
+        background-color: transparent;
+        border: none; /* Remove the dashed border */
     }
-    [data-testid="stFileUploader"] div[role="button"] {
+    
+    /* Target the text inside the dropzone to hide it */
+    [data-testid="stFileUploader"] section > div > div > span {
+        display: none;
+    }
+
+    /* 5. STYLE THE BUTTON (The "Icon") */
+    /* We target the button element inside the uploader */
+    [data-testid="stFileUploader"] button {
         background: linear-gradient(135deg, #10b981 0%, #059669 100%);
         color: white;
         border: none;
-        border-radius: 12px;
-        padding: 15px;
-        text-align: center;
+        border-radius: 50px; /* Pill shape */
+        padding: 12px 0;
+        font-weight: bold;
         width: 100%;
-        margin: 0 auto;
-        display: block;
+        transition: transform 0.2s;
+        box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
     }
-    /* Hide the small "Limit 200MB" text */
-    [data-testid="stFileUploader"] small { display: none; }
-    /* Hide the file list after upload to keep it clean */
-    [data-testid="stFileUploader"] .uploadedFile { display: none; }
+    
+    [data-testid="stFileUploader"] button:hover {
+        transform: scale(1.02);
+        box-shadow: 0 6px 20px rgba(16, 185, 129, 0.6);
+        color: white;
+        border-color: transparent;
+    }
+    
+    /* Ensure the button text is visible (Streamlit sometimes overrides color) */
+    [data-testid="stFileUploader"] button div {
+        color: white !important;
+    }
 
-    /* 5. DASHBOARD STYLING */
+    /* 6. DASHBOARD STYLING */
     div[data-testid="stMetricValue"] { font-family: 'Courier New', monospace; color: #10b981; }
     .streamlit-expanderHeader { background-color: #1a2624; color: #e2e8f0; }
-    
     .badge-red { background-color: #ef4444; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold; }
     .badge-yellow { background-color: #f59e0b; color: black; padding: 4px 8px; border-radius: 4px; font-weight: bold; }
     .badge-green { background-color: #10b981; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold; }
-    
-    .legend-box {
-        background-color: #1a2624;
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #334155;
-        margin-bottom: 20px;
-        font-size: 0.9rem;
-    }
+    .legend-box { background-color: #1a2624; padding: 15px; border-radius: 10px; border: 1px solid #334155; margin-bottom: 20px; font-size: 0.9rem; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. SIDEBAR LAYOUT ---
+# --- 2. SIDEBAR CONTENT ---
 with st.sidebar:
     st.markdown("### ⚙️ Controls")
-    st.info("Supported: Food, Cosmetics, Cleaning Supplies")
+    st.info("Supported: Food, Cosmetics, Cleaning")
     
-    # SPACER: This invisible block pushes everything below it to the bottom
+    # SPACER: Pushes the next item to the very bottom
     st.markdown('<div class="sidebar-spacer"></div>', unsafe_allow_html=True)
     
-    # THE UPLOADER (Now at the bottom)
-    uploaded_file = st.file_uploader("📷 Scan Product", type=["jpg", "png", "jpeg"], label_visibility="collapsed")
+    # THE UPLOADER (Bottom)
+    uploaded_file = st.file_uploader("Scan Product", type=["jpg", "png", "jpeg"], label_visibility="collapsed")
 
 
 # --- 3. MAIN APP LOGIC ---
-st.title("EcoScan 🌐") # Removed "v2.1" as requested
+st.title("EcoScan 🌐") # Removed "v2.1"
 st.caption("Universal Multi-Category Product Auditor")
 
 # LANDING STATE
 if uploaded_file is None:
     st.markdown("""
-    <div style="text-align: center; margin-top: 50px; opacity: 0.7;">
-        <h3>Ready to Audit</h3>
-        <p>Use the <b>Scan Product</b> button in the sidebar to begin.</p>
+    <div style="text-align: center; margin-top: 100px; opacity: 0.8;">
+        <h2>Ready to Audit</h2>
+        <p style="color: #94a3b8;">Use the green <b>Browse files</b> button in the sidebar to scan a label.</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -153,8 +166,8 @@ else:
     <div class="legend-box">
         <strong>🚦 RATING GUIDE:</strong><br>
         <span style="color:#ef4444">🔴 <strong>RED (Hazard/False):</strong></span> Toxic ingredients or outright lies.<br>
-        <span style="color:#f59e0b">🟡 <strong>YELLOW (Caution/Vague):</strong></span> Unregulated terms (e.g. "Natural") or moderate impact.<br>
-        <span style="color:#10b981">🟢 <strong>GREEN (Safe/Verified):</strong></span> Certified sustainable or beneficial.
+        <span style="color:#f59e0b">🟡 <strong>YELLOW (Caution/Vague):</strong></span> Unregulated terms or moderate impact.<br>
+        <span style="color:#10b981">🟢 <strong>GREEN (Safe/Verified):</strong></span> Certified sustainable.
     </div>
     """, unsafe_allow_html=True)
     
@@ -187,7 +200,6 @@ else:
     st.divider()
     st.subheader("📢 Claims Intel")
     claims_data = scores.get("claims_breakdown", [])
-    
     if not claims_data:
         st.info("No marketing claims detected.")
     else:
@@ -196,11 +208,9 @@ else:
             claim_text = item.get("claim", "Unknown Claim")
             verdict = item.get("verdict", "UNVERIFIED")
             explanation = item.get("explanation", "No details.")
-
             if status == "RED": icon = "🔴"
             elif status == "GREEN": icon = "🟢"
             else: icon = "🟡"
-
             with st.expander(f"{icon} Claim: \"{claim_text}\""):
                 st.markdown(f"**Verdict:** {verdict}")
                 st.write(f"**Analysis:** {explanation}")
@@ -208,7 +218,6 @@ else:
     # --- INGREDIENTS SECTION ---
     st.divider()
     st.subheader("🧪 Ingredient Intel")
-    
     ingredient_list = scores.get("ingredient_breakdown", [])
     if not ingredient_list:
         st.info("No detailed ingredient analysis returned.")
@@ -218,11 +227,9 @@ else:
             name = item.get("name", "Unknown")
             explanation = item.get("explanation", "No details.")
             alternative = item.get("alternative", "None suggestion.")
-            
             if status == "RED": icon = "🔴"
             elif status == "GREEN": icon = "🟢"
             else: icon = "🟡"
-            
             with st.expander(f"{icon} {name}"):
                 st.markdown(f"**Impact:** {explanation}")
                 if alternative and alternative != "None":
