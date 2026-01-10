@@ -11,13 +11,27 @@ def get_client():
     return Groq(api_key=api_key)
 
 # --- PROMPTS ---
-ANALYZER_PROMPT = """
-You are a ruthless Environmental Scientist. Detect Greenwashing.
-PRIORITY 1: PLANETARY HEALTH
-- RED: High Carbon (Beef, Dairy), Deforestation (Palm Oil), Microplastics.
-- YELLOW: High Water (Almonds), Imported.
-- GREEN: Plant-based, Organic, Locally sourced.
-Output strictly valid JSON.
+# FIX: Added claims_breakdown to the JSON structure
+SCORING_PROMPT = """
+You are the EcoScan Scoring Judge. 
+Calculate a Sustainability Score (0-100).
+Weights: Environment (40%), Social (30%), Governance (30%).
+
+Output JSON:
+{{
+    "environment_score": 0,
+    "social_score": 0,
+    "governance_score": 0,
+    "final_total_score": 0,
+    "breakdown_notes": ["Note 1", "Note 2"],
+    "ingredient_breakdown": [
+        {{ "name": "Item", "status": "RED/YELLOW/GREEN", "explanation": "Impact", "alternative": "Switch" }}
+    ],
+    "claims_breakdown": [
+        {{ "claim": "e.g. 100% Natural", "status": "RED/YELLOW/GREEN", "verdict": "TRUE/FALSE/VAGUE", "explanation": "Why is this claim true or false?" }}
+    ]
+}}
+INPUT DATA: Ingredients: {ingredients}, Claims: {claims}, Origin: {origin}
 """
 
 LOGISTICS_PROMPT = """
@@ -28,26 +42,7 @@ You are a Logistics Detective.
    - Regional (GCC): Neutral.
    - International (>2000km): Penalty.
 3. Roast the food miles.
-Output JSON: { "origin_identified": "Country", "distance_score_adj": -5, "is_local": false, "roast_line": "Sarcastic comment." }
-"""
-
-
-SCORING_PROMPT = """
-You are the EcoScan Scoring Judge. 
-Calculate a Sustainability Score (0-100).
-Weights: Environment (40%), Social (30%), Governance (30%).
-Output JSON:
-{{
-    "environment_score": 0,
-    "social_score": 0,
-    "governance_score": 0,
-    "final_total_score": 0,
-    "breakdown_notes": ["Note 1", "Note 2"],
-    "ingredient_breakdown": [
-        {{ "name": "Item", "status": "RED/YELLOW/GREEN", "explanation": "Impact", "alternative": "Switch" }}
-    ]
-}}
-INPUT DATA: Ingredients: {ingredients}, Claims: {claims}, Origin: {origin}
+Output JSON: {{ "origin_identified": "Country", "distance_score_adj": -5, "is_local": false, "roast_line": "Sarcastic comment." }}
 """
 
 ROAST_PROMPT = """
@@ -67,14 +62,14 @@ async def extract_data_from_image(image_file):
     Extract:
     1. Product Category (e.g. Food, Cosmetic, Cleaning).
     2. Ingredients list.
-    3. Claims (e.g. Natural).
+    3. Claims (e.g. 'Natural', 'Organic', 'Dermatologist Tested').
     4. Origin/Made In.
     Return JSON: { "product_category": "...", "ingredients": [], "claims": [], "origin_info": "..." }
     """
     
     try:
         completion = client.chat.completions.create(
-            model="meta-llama/llama-4-scout-17b-16e-instruct", # The Working Model
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
             messages=[{
                 "role": "user", 
                 "content": [
@@ -101,6 +96,7 @@ def identify_category(text):
 # --- 3. SCORING ENGINE ---
 async def calculate_scores(category, ingredients, claims, origin):
     client = get_client()
+    # Double braces are already handled in the variable definition above
     prompt = SCORING_PROMPT.format(category=category, ingredients=str(ingredients), claims=str(claims), origin=origin)
     try:
         completion = client.chat.completions.create(
@@ -111,7 +107,7 @@ async def calculate_scores(category, ingredients, claims, origin):
         )
         return json.loads(completion.choices[0].message.content)
     except:
-        return {"final_total_score": 50, "breakdown_notes": ["Scoring Failed"]}
+        return {"final_total_score": 50, "breakdown_notes": ["Scoring Failed"], "ingredient_breakdown": [], "claims_breakdown": []}
 
 # --- 4. LOGISTICS ENGINE ---
 async def analyze_logistics(origin_text):
