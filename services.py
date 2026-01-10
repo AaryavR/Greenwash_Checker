@@ -2,7 +2,7 @@ import os
 import json
 import asyncio
 import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold # <--- New Import
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from groq import Groq
 from dotenv import load_dotenv
 
@@ -44,9 +44,10 @@ Write a ONE-LINE summary of this product based on these ingredients.
 - Keep it under 20 words.
 """
 
-# --- 1. VISION ---
+# --- 1. VISION (Fixed Model) ---
 async def extract_text_from_image(image_file):
-    model = genai.GenerativeModel('gemini-flash-latest')
+    # CHANGED TO 1.5-FLASH (High Limit)
+    model = genai.GenerativeModel('gemini-1.5-flash')
     image_data = await image_file.read()
     prompt = "Extract ingredients and Green claims. Return JSON: {'ingredients': [], 'claims': []}"
     try:
@@ -67,7 +68,6 @@ async def analyze_ingredients_parallel(data):
 
     text_input = f"Analyze: {all_items}"
     
-    # Run Parallel
     task1 = asyncio.to_thread(call_gemini_analyzer, text_input)
     task2 = asyncio.to_thread(call_groq_analyzer, text_input)
     result_a, result_b = await asyncio.gather(task1, task2)
@@ -78,7 +78,8 @@ async def analyze_ingredients_parallel(data):
     return final_results, summary
 
 def call_gemini_analyzer(content):
-    model = genai.GenerativeModel('gemini-flash-latest')
+    # CHANGED TO 1.5-FLASH
+    model = genai.GenerativeModel('gemini-1.5-flash')
     try:
         response = model.generate_content(
             ANALYZER_PROMPT + "\nInput: " + content,
@@ -116,24 +117,25 @@ async def merge_and_judge(all_items, analysis_a, analysis_b):
     return final_report
 
 async def call_tiebreaker(item, a, b):
-    model = genai.GenerativeModel('gemini-flash-latest')
+    # CHANGED TO 1.5-FLASH
+    model = genai.GenerativeModel('gemini-1.5-flash')
     prompt = TIEBREAKER_PROMPT.format(item=item, status_a=a['status'], status_b=b['status'])
     try:
         response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
         return json.loads(response.text)
     except: return {"final_status": "YELLOW", "final_explanation": "Judge unavailable."}
 
-# --- 4. SUMMARY (FIXED) ---
+# --- 4. SUMMARY ---
 async def generate_witty_summary(final_results):
-    model = genai.GenerativeModel('gemini-flash-latest')
+    # CHANGED TO 1.5-FLASH
+    model = genai.GenerativeModel('gemini-1.5-flash')
     
-    # Check if results exist
     if not final_results:
-        return "I couldn't read the label, but I'm assuming it's destroying the rainforest."
+        return "I couldn't read the label."
 
     context = str([f"{r['name']}: {r['status']}" for r in final_results])
     
-    # DISABLE SAFETY FILTERS (Allows "roasting")
+    # SAFETY OFF
     safety_settings = {
         HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
         HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -148,5 +150,5 @@ async def generate_witty_summary(final_results):
         )
         return response.text.strip()
     except Exception as e:
-        print(f"⚠️ SUMMARY ERROR: {e}") # This will show in Render Logs
-        return f"The AI is silent. (Error: {str(e)[:50]}...)"
+        print(f"⚠️ SUMMARY ERROR: {e}")
+        return "The AI is silent."
