@@ -1,5 +1,4 @@
-fastapi
-uvicorn
-python-multipart
+streamlit
 python-dotenv
 groq>=0.5.0
+pandas
