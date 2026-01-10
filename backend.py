@@ -31,21 +31,22 @@ You are a Logistics Detective.
 Output JSON: { "origin_identified": "Country", "distance_score_adj": -5, "is_local": false, "roast_line": "Sarcastic comment." }
 """
 
+
 SCORING_PROMPT = """
 You are the EcoScan Scoring Judge. 
 Calculate a Sustainability Score (0-100).
 Weights: Environment (40%), Social (30%), Governance (30%).
 Output JSON:
-{
+{{
     "environment_score": 0,
     "social_score": 0,
     "governance_score": 0,
     "final_total_score": 0,
     "breakdown_notes": ["Note 1", "Note 2"],
     "ingredient_breakdown": [
-        { "name": "Item", "status": "RED/YELLOW/GREEN", "explanation": "Impact", "alternative": "Switch" }
+        {{ "name": "Item", "status": "RED/YELLOW/GREEN", "explanation": "Impact", "alternative": "Switch" }}
     ]
-}
+}}
 INPUT DATA: Ingredients: {ingredients}, Claims: {claims}, Origin: {origin}
 """
 
