@@ -24,8 +24,8 @@ Output strictly valid JSON:
 TIEBREAKER_PROMPT = """
 Decide based on ENVIRONMENTAL IMPACT.
 Item: {item}
-AI 1 (Llama): {status_a}
-AI 2 (Mixtral): {status_b}
+AI 1 (Scientist): {status_a}
+AI 2 (Critic): {status_b}
 Output JSON: { "final_status": "RED/YELLOW/GREEN", "final_explanation": "Ruling" }
 """
 
@@ -37,9 +37,9 @@ Write a ONE-LINE summary of this product based on these ingredients.
 - Keep it under 20 words.
 """
 
-# --- 1. VISION (Groq Llama 3.2 Vision) ---
+# --- 1. VISION (Updated to 11B Vision) ---
 async def extract_text_from_image(image_file):
-    print("--- Vision: Using Groq Llama 3.2 ---")
+    print("--- Vision: Using Groq Llama 3.2 (11B) ---")
     image_data = await image_file.read()
     base64_image = base64.b64encode(image_data).decode('utf-8')
     
@@ -47,7 +47,8 @@ async def extract_text_from_image(image_file):
     
     try:
         completion = groq_client.chat.completions.create(
-            model="llama-3.2-90b-vision-preview",
+            # UPDATED MODEL ID
+            model="llama-3.2-11b-vision-preview",
             messages=[
                 {
                     "role": "user",
@@ -75,12 +76,12 @@ async def analyze_ingredients_parallel(data):
 
     text_input = f"Analyze: {all_items}"
     
-    # --- THE DUAL AI CHECK ---
-    # Task 1: Llama 3 (70 Billion Parameters) - The "Smart" one
-    task1 = asyncio.to_thread(call_ai_model, "llama3-70b-8192", text_input, all_items)
+    # --- THE DUAL AI CHECK (Updated Models) ---
+    # Task 1: Llama 3.3 (70B) - The New Flagship "Scientist"
+    task1 = asyncio.to_thread(call_ai_model, "llama-3.3-70b-versatile", text_input, all_items)
     
-    # Task 2: Mixtral 8x7B - The "Diverse" one (Different logic structure)
-    task2 = asyncio.to_thread(call_ai_model, "mixtral-8x7b-32768", text_input, all_items)
+    # Task 2: Llama 3.1 (8B) - The Fast "Critic"
+    task2 = asyncio.to_thread(call_ai_model, "llama-3.1-8b-instant", text_input, all_items)
     
     # Run them at the same time
     result_a, result_b = await asyncio.gather(task1, task2)
@@ -104,7 +105,7 @@ def call_ai_model(model_name, content, all_items):
         # Normalize the output to list format
         report = {}
         for item in all_items:
-            # Flexible matching (AI often returns slightly different keys)
+            # Flexible matching
             found_data = None
             for key, val in analysis_dict.items():
                 if item.lower() in key.lower() or key.lower() in item.lower():
@@ -126,40 +127,37 @@ async def merge_and_judge(all_items, analysis_a, analysis_b):
     final_report = []
     
     for item in all_items:
-        a = analysis_a.get(item) # Llama's opinion
-        b = analysis_b.get(item) # Mixtral's opinion
+        a = analysis_a.get(item) # Scientist
+        b = analysis_b.get(item) # Critic
         
-        # Fail-Safe: If one AI crashed, trust the other completely
         if not a: a = b
         if not b: b = a
         if not a: continue 
 
-        # If they AGREE -> Verified!
         if a['status'] == b['status']:
             final_report.append({
                 "name": item,
                 "status": a['status'],
                 "explanation": a['explanation'],
-                "consensus": True # Verified by 2 AIs
+                "consensus": True 
             })
-        # If they DISAGREE -> Tiebreaker
         else:
-            print(f"CONFLICT on {item}: Llama says {a['status']}, Mixtral says {b['status']}")
+            print(f"CONFLICT on {item}: Scientist says {a['status']}, Critic says {b['status']}")
             ruling = await call_tiebreaker(item, a, b)
             final_report.append({
                 "name": item,
                 "status": ruling['final_status'],
                 "explanation": ruling['final_explanation'],
-                "consensus": False # The Judge had to intervene
+                "consensus": False
             })
     return final_report
 
 async def call_tiebreaker(item, a, b):
-    # The Judge is Llama 3 (it has the highest IQ for reasoning)
+    # Judge is Llama 3.3 (Highest Intelligence)
     prompt = TIEBREAKER_PROMPT.format(item=item, status_a=a['status'], status_b=b['status'])
     try:
         completion = groq_client.chat.completions.create(
-            model="llama3-70b-8192",
+            model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
             response_format={"type": "json_object"}
@@ -174,7 +172,7 @@ async def generate_witty_summary(final_results):
     context = str([f"{r['name']}: {r['status']}" for r in final_results])
     try:
         completion = groq_client.chat.completions.create(
-            model="llama3-70b-8192",
+            model="llama-3.3-70b-versatile",
             messages=[{"role": "system", "content": WITTY_SUMMARY_PROMPT}, {"role": "user", "content": f"Data: {context}"}],
             temperature=0.7 
         )
