@@ -12,91 +12,96 @@ load_dotenv()
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
+# USE THE MODEL FROM YOUR LIST (Lite version = Higher Limits)
+GOOGLE_MODEL_NAME = 'gemini-2.0-flash-lite-preview-02-05'
+
 # --- PROMPTS ---
 ANALYZER_PROMPT = """
 You are a ruthless Environmental Scientist. Detect Greenwashing.
-PRIORITY 1: PLANETARY HEALTH (Sustainability)
-- RED: High Carbon (Beef, Dairy), Deforestation (Palm Oil), Microplastics, "Uncertified" claims.
-- YELLOW: High Water (Almonds), Imported/Food Miles, Industrial Monocultures.
-- GREEN: Plant-based, Organic, Fair Trade, Locally sourced.
-
-PRIORITY 2: HUMAN HEALTH
-- RED: Toxic/Carcinogenic ingredients.
-- YELLOW: Unhealthy (Sugar) but not toxic.
-
+PRIORITY 1: PLANETARY HEALTH
+- RED: High Carbon (Beef, Dairy), Deforestation (Palm Oil), Microplastics.
+- YELLOW: High Water (Almonds), Imported.
+- GREEN: Plant-based, Organic, Locally sourced.
 Output strictly valid JSON:
 { "ItemName": { "status": "RED", "explanation": "Reason..." } }
 """
 
 TIEBREAKER_PROMPT = """
-Two AIs disagreed on: "{item}".
+Decide based on ENVIRONMENTAL IMPACT.
+Item: {item}
 AI 1: {status_a}
 AI 2: {status_b}
-Decide based on ENVIRONMENTAL IMPACT first.
 Output JSON: { "final_status": "RED/YELLOW/GREEN", "final_explanation": "Ruling" }
 """
 
 WITTY_SUMMARY_PROMPT = """
 You are a sarcastic environmental activist. 
-Write a ONE-LINE summary of this product based on these ingredients.
-- If it's greenwashing: Roast them ruthlessly.
-- If it's sustainable: Be skeptical but impressed.
+Write a ONE-LINE summary.
+- Greenwashing: Roast them.
+- Sustainable: Be skeptical but impressed.
 - Keep it under 20 words.
 """
 
-# --- 1. VISION (Fixed Model) ---
+# --- 1. VISION ---
 async def extract_text_from_image(image_file):
-    # CHANGED TO 1.5-FLASH (High Limit)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    print(f"--- Vision: Using {GOOGLE_MODEL_NAME} ---")
+    model = genai.GenerativeModel(GOOGLE_MODEL_NAME)
     image_data = await image_file.read()
-    prompt = "Extract ingredients and Green claims. Return JSON: {'ingredients': [], 'claims': []}"
+    
+    prompt = "Extract ingredients and claims. Return JSON: {'ingredients': [], 'claims': []}"
+    
     try:
         response = model.generate_content([prompt, {'mime_type': image_file.content_type, 'data': image_data}])
         text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(text)
     except Exception as e:
-        print(f"VISION ERROR: {e}")
+        print(f"!!! VISION ERROR: {e}")
+        # Fallback: Return empty so the app doesn't crash, just says "No data"
         return {"ingredients": [], "claims": ["Error reading image"]}
 
-# --- 2. ANALYZERS ---
+# --- 2. ANALYZERS (FAIL-SAFE) ---
 async def analyze_ingredients_parallel(data):
     ingredients = data.get("ingredients", [])
     claims = data.get("claims", [])
     all_items = ingredients + claims
     
-    if not all_items: return [], "No data found."
+    if not all_items: return [], "No ingredients found."
 
     text_input = f"Analyze: {all_items}"
     
+    # Run Parallel - IF GOOGLE FAILS, IT WON'T KILL THE APP
     task1 = asyncio.to_thread(call_gemini_analyzer, text_input)
     task2 = asyncio.to_thread(call_groq_analyzer, text_input)
-    result_a, result_b = await asyncio.gather(task1, task2)
     
+    # return_exceptions=True prevents one crash from stopping the other
+    results = await asyncio.gather(task1, task2, return_exceptions=True)
+    
+    result_a = results[0] if not isinstance(results[0], Exception) else {}
+    result_b = results[1] if not isinstance(results[1], Exception) else {}
+    
+    if isinstance(results[0], Exception): print(f"⚠️ Google Analyzer Failed: {results[0]}")
+
     final_results = await merge_and_judge(all_items, result_a, result_b)
     summary = await generate_witty_summary(final_results)
     
     return final_results, summary
 
 def call_gemini_analyzer(content):
-    # CHANGED TO 1.5-FLASH
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    try:
-        response = model.generate_content(
-            ANALYZER_PROMPT + "\nInput: " + content,
-            generation_config={"response_mime_type": "application/json"}
-        )
-        return json.loads(response.text)
-    except: return {}
+    model = genai.GenerativeModel(GOOGLE_MODEL_NAME)
+    response = model.generate_content(
+        ANALYZER_PROMPT + "\nInput: " + content,
+        generation_config={"response_mime_type": "application/json"}
+    )
+    return json.loads(response.text)
 
 def call_groq_analyzer(content):
-    try:
-        completion = groq_client.chat.completions.create(
-            model="llama3-70b-8192",
-            messages=[{"role": "system", "content": ANALYZER_PROMPT}, {"role": "user", "content": content}],
-            temperature=0, response_format={"type": "json_object"}
-        )
-        return json.loads(completion.choices[0].message.content)
-    except: return {}
+    # Groq is our Safety Net. It rarely fails.
+    completion = groq_client.chat.completions.create(
+        model="llama3-70b-8192",
+        messages=[{"role": "system", "content": ANALYZER_PROMPT}, {"role": "user", "content": content}],
+        temperature=0, response_format={"type": "json_object"}
+    )
+    return json.loads(completion.choices[0].message.content)
 
 # --- 3. CONSENSUS ---
 async def merge_and_judge(all_items, analysis_a, analysis_b):
@@ -105,9 +110,12 @@ async def merge_and_judge(all_items, analysis_a, analysis_b):
         a = analysis_a.get(item)
         b = analysis_b.get(item)
         
+        # If Google Failed (Empty A), use Groq (B)
         if not a: a = b
+        # If Groq Failed (Empty B), use Google (A)
         if not b: b = a
-        if not a: continue
+        
+        if not a: continue # If both failed, skip
 
         if a['status'] == b['status']:
             final_report.append({"name": item, "status": a['status'], "explanation": a['explanation']})
@@ -117,25 +125,23 @@ async def merge_and_judge(all_items, analysis_a, analysis_b):
     return final_report
 
 async def call_tiebreaker(item, a, b):
-    # CHANGED TO 1.5-FLASH
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel(GOOGLE_MODEL_NAME)
     prompt = TIEBREAKER_PROMPT.format(item=item, status_a=a['status'], status_b=b['status'])
     try:
         response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
         return json.loads(response.text)
-    except: return {"final_status": "YELLOW", "final_explanation": "Judge unavailable."}
+    except: 
+        # If Judge fails, default to Caution
+        return {"final_status": "YELLOW", "final_explanation": "Judge unavailable (Quota Limit)."}
 
 # --- 4. SUMMARY ---
 async def generate_witty_summary(final_results):
-    # CHANGED TO 1.5-FLASH
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel(GOOGLE_MODEL_NAME)
     
-    if not final_results:
-        return "I couldn't read the label."
+    if not final_results: return "I couldn't read the label."
 
     context = str([f"{r['name']}: {r['status']}" for r in final_results])
     
-    # SAFETY OFF
     safety_settings = {
         HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
         HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -150,5 +156,5 @@ async def generate_witty_summary(final_results):
         )
         return response.text.strip()
     except Exception as e:
-        print(f"⚠️ SUMMARY ERROR: {e}")
-        return "The AI is silent."
+        print(f"⚠️ Summary Failed: {e}")
+        return "I'm speechless (literally, the API crashed)."
