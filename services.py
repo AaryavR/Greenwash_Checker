@@ -21,12 +21,13 @@ Output strictly valid JSON:
 { "ItemName": { "status": "RED", "explanation": "Reason..." } }
 """
 
+# BUG FIX: Double curly braces {{ }} around the JSON example so .format() ignores them
 TIEBREAKER_PROMPT = """
 Decide based on ENVIRONMENTAL IMPACT.
 Item: {item}
 AI 1 (Scientist): {status_a}
 AI 2 (Critic): {status_b}
-Output JSON: { "final_status": "RED/YELLOW/GREEN", "final_explanation": "Ruling" }
+Output JSON: {{ "final_status": "RED/YELLOW/GREEN", "final_explanation": "Ruling" }}
 """
 
 WITTY_SUMMARY_PROMPT = """
@@ -37,7 +38,7 @@ Write a ONE-LINE summary of this product based on these ingredients.
 - Keep it under 20 words.
 """
 
-# --- 1. VISION (Llama 4 Scout - The New Vision Model) ---
+# --- 1. VISION (Llama 4 Scout) ---
 async def extract_text_from_image(image_file):
     print("--- Vision: Using Groq Llama 4 Scout ---")
     image_data = await image_file.read()
@@ -47,7 +48,6 @@ async def extract_text_from_image(image_file):
     
     try:
         completion = groq_client.chat.completions.create(
-            # UPDATED: The new valid vision model ID
             model="meta-llama/llama-4-scout-17b-16e-instruct",
             messages=[
                 {
@@ -64,10 +64,9 @@ async def extract_text_from_image(image_file):
         return json.loads(completion.choices[0].message.content)
     except Exception as e:
         print(f"!!! VISION ERROR: {e}")
-        # Fallback for error handling
         return {"ingredients": [], "claims": ["Error reading image"]}
 
-# --- 2. ANALYZERS (Two Different Brains) ---
+# --- 2. ANALYZERS ---
 async def analyze_ingredients_parallel(data):
     ingredients = data.get("ingredients", [])
     claims = data.get("claims", [])
@@ -77,17 +76,14 @@ async def analyze_ingredients_parallel(data):
 
     text_input = f"Analyze: {all_items}"
     
-    # --- THE DUAL AI CHECK (Updated Models) ---
-    # Task 1: Llama 3.3 (70B) - The New Flagship "Scientist"
+    # Task 1: Llama 3.3 (Scientist)
     task1 = asyncio.to_thread(call_ai_model, "llama-3.3-70b-versatile", text_input, all_items)
     
-    # Task 2: Llama 3.1 (8B) - The Fast "Critic"
+    # Task 2: Llama 3.1 (Critic)
     task2 = asyncio.to_thread(call_ai_model, "llama-3.1-8b-instant", text_input, all_items)
     
-    # Run them at the same time
     result_a, result_b = await asyncio.gather(task1, task2)
     
-    # Compare their answers
     final_results = await merge_and_judge(all_items, result_a, result_b)
     
     summary = await generate_witty_summary(final_results)
@@ -103,10 +99,8 @@ def call_ai_model(model_name, content, all_items):
         )
         analysis_dict = json.loads(completion.choices[0].message.content)
         
-        # Normalize the output to list format
         report = {}
         for item in all_items:
-            # Flexible matching
             found_data = None
             for key, val in analysis_dict.items():
                 if item.lower() in key.lower() or key.lower() in item.lower():
@@ -128,8 +122,8 @@ async def merge_and_judge(all_items, analysis_a, analysis_b):
     final_report = []
     
     for item in all_items:
-        a = analysis_a.get(item) # Scientist
-        b = analysis_b.get(item) # Critic
+        a = analysis_a.get(item) 
+        b = analysis_b.get(item) 
         
         if not a: a = b
         if not b: b = a
@@ -154,7 +148,8 @@ async def merge_and_judge(all_items, analysis_a, analysis_b):
     return final_report
 
 async def call_tiebreaker(item, a, b):
-    # Judge is Llama 3.3 (Highest Intelligence)
+    # Judge is Llama 3.3
+    # Double curly braces used in PROMPT variable, so .format() is safe now
     prompt = TIEBREAKER_PROMPT.format(item=item, status_a=a['status'], status_b=b['status'])
     try:
         completion = groq_client.chat.completions.create(
@@ -164,7 +159,8 @@ async def call_tiebreaker(item, a, b):
             response_format={"type": "json_object"}
         )
         return json.loads(completion.choices[0].message.content)
-    except: 
+    except Exception as e:
+        print(f"Judge Error: {e}")
         return {"final_status": "YELLOW", "final_explanation": "Judge unavailable."}
 
 # --- 4. SUMMARY ---
