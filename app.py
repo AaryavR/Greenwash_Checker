@@ -234,4 +234,4 @@ else:
                     st.success(f"**Better Choice:** {alternative}")
     
     # Extra spacing for bottom bar
-    st.write("<br><br><br>", unsafe_allow_html=True)
+    st.write("<br><br><br>", unsafe_allow_html=True) 
