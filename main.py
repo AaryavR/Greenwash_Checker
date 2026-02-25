@@ -396,8 +396,11 @@ async def analyze_product(request: AnalyzeRequest) -> AnalyzeResponse:
     # Step 6: Calculate final score
     base_health_score = llm_result.get("base_health_score", 50)
 
-    # Apply penalties
-    final_score = max(0, base_health_score - (15 * banned_count) - food_miles_penalty)
+    # Apply zero-tolerance policy for banned additives
+    if banned_count > 0:
+        final_score = 0
+    else:
+        final_score = max(0, base_health_score - food_miles_penalty)
 
     # Step 7: Build response
     return AnalyzeResponse(
