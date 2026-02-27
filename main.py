@@ -76,6 +76,7 @@ class AnalyzeRequest(BaseModel):
     front_text: str = Field(..., min_length=1, description="Text from front of product label")
     back_text: str = Field(..., min_length=1, description="Text from back of product label (ingredients, etc.)")
     origin_country: Optional[str] = Field(None, description="Country of origin")
+    user_country: str = Field(..., description="User's location country for food miles calculation")
     language: str = Field(default="English", description="Language for localization")
 
     @field_validator('language')
@@ -223,9 +224,9 @@ async def fetch_alternatives(barcode: Optional[str]) -> tuple[List[AlternativePr
     return [], category
 
 
-def calculate_food_miles_penalty(origin_country: Optional[str]) -> int:
+def calculate_food_miles_penalty(origin_country: Optional[str], user_country: str) -> int:
     """
-    Calculate food miles penalty based on distance from origin to Dubai.
+    Calculate food miles penalty based on distance from origin to user's location.
     Returns 10 points penalty if distance > 4000 miles.
     """
     if not origin_country:
@@ -233,14 +234,20 @@ def calculate_food_miles_penalty(origin_country: Optional[str]) -> int:
 
     try:
         # Geocode origin country
-        location = geolocator.geocode(origin_country)
-        if not location:
+        origin_location = geolocator.geocode(origin_country)
+        if not origin_location:
             return 0
 
-        origin_coords = (location.latitude, location.longitude)
+        # Geocode user country
+        user_location = geolocator.geocode(user_country)
+        if not user_location:
+            return 0
+
+        origin_coords = (origin_location.latitude, origin_location.longitude)
+        user_coords = (user_location.latitude, user_location.longitude)
 
         # Calculate distance in km
-        distance_km = geodesic(origin_coords, DUBAI_COORDS).kilometers
+        distance_km = geodesic(origin_coords, user_coords).kilometers
 
         # Convert to miles
         distance_miles = distance_km * 0.621371
@@ -289,7 +296,7 @@ async def call_llm_analysis(
     Call LLM for product analysis with Groq (primary) and Gemini fallback.
     Returns parsed JSON response.
     """
-    system_prompt = f"""You are ChemCheck, a product sustainability auditor. Analyze the product and return a valid JSON response with this exact structure:
+    system_prompt = f"""You are RedFlag, a product sustainability auditor. Analyze the product and return a valid JSON response with this exact structure:
 
 {{
     "base_health_score": <int 0-100>,
@@ -377,7 +384,7 @@ async def analyze_product(request: AnalyzeRequest) -> AnalyzeResponse:
     banned_count, banned_flags = await check_banned_additives(request.back_text)
 
     # Step 2: Calculate food miles penalty
-    food_miles_penalty = calculate_food_miles_penalty(request.origin_country)
+    food_miles_penalty = calculate_food_miles_penalty(request.origin_country, request.user_country)
 
     # Step 3: Fetch alternatives (runs in parallel with LLM)
     alternatives_task = fetch_alternatives(request.barcode)
