@@ -422,6 +422,7 @@ async def analyze_product(
 
     # Step 2: Get user ID from authorization token if provided
     user_id = None
+    print(f"Auth Header: {authorization}")  # Debug: Check if token arrives in Render logs
     if authorization and authorization.startswith("Bearer "):
         token = authorization.replace("Bearer ", "")
         try:
@@ -464,6 +465,7 @@ async def analyze_product(
 
     # Step 7: Build response
     overall_summary = llm_result.get("overall_summary", "Analysis completed.")
+    ingredients_analysis = llm_result.get("ingredients_analysis", [])
 
     # Step 8: Save to scan_history if user is authenticated
     if user_id:
@@ -472,7 +474,8 @@ async def analyze_product(
                 "user_id": user_id,
                 "product_name": product_name,
                 "final_score": final_score,
-                "overall_summary": overall_summary
+                "overall_summary": overall_summary,
+                "ingredients_analysis": ingredients_analysis
             }).execute()
         except Exception as e:
             # Log error but don't fail the request
