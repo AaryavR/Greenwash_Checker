@@ -463,19 +463,29 @@ async def analyze_product(
     else:
         final_score = max(0, base_health_score - food_miles_penalty)
 
-    # Step 7: Build response
+    # Step 7: Build response Pydantic models first
     overall_summary = llm_result.get("overall_summary", "Analysis completed.")
-    ingredients_analysis = llm_result.get("ingredients_analysis", [])
+
+    # Build Pydantic models for claims and ingredients
+    claims_analysis_models = [
+        ClaimAnalysis(**claim) for claim in llm_result.get("claims_analysis", [])
+    ]
+    ingredients_analysis_models = [
+        IngredientAnalysis(**ingredient) for ingredient in llm_result.get("ingredients_analysis", [])
+    ]
 
     # Step 8: Save to scan_history if user is authenticated
     if user_id:
         try:
+            # Convert Pydantic models to dicts for Supabase JSONB column
+            ingredients_analysis_dicts = [ing.model_dump() for ing in ingredients_analysis_models]
+
             supabase.table("scan_history").insert({
                 "user_id": user_id,
                 "product_name": product_name,
                 "final_score": final_score,
                 "overall_summary": overall_summary,
-                "ingredients_analysis": ingredients_analysis
+                "ingredients_analysis": ingredients_analysis_dicts
             }).execute()
         except Exception as e:
             # Log error but don't fail the request
@@ -486,12 +496,8 @@ async def analyze_product(
         base_health_score=base_health_score,
         food_miles_penalty=food_miles_penalty,
         overall_summary=overall_summary,
-        claims_analysis=[
-            ClaimAnalysis(**claim) for claim in llm_result.get("claims_analysis", [])
-        ],
-        ingredients_analysis=[
-            IngredientAnalysis(**ingredient) for ingredient in llm_result.get("ingredients_analysis", [])
-        ],
+        claims_analysis=claims_analysis_models,
+        ingredients_analysis=ingredients_analysis_models,
         alternatives=alternatives
     )
 
