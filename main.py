@@ -73,8 +73,8 @@ FOOD_MILES_THRESHOLD = 6437  # ~4000 miles in km
 class AnalyzeRequest(BaseModel):
     """Request model for product analysis."""
     barcode: Optional[str] = None
-    front_text: str = Field(..., min_length=1, description="Text from front of product label")
-    back_text: str = Field(..., min_length=1, description="Text from back of product label (ingredients, etc.)")
+    front_text: Optional[str] = Field(None, description="Text from front of product label")
+    back_text: Optional[str] = Field(None, description="Text from back of product label (ingredients, etc.)")
     origin_country: Optional[str] = Field(None, description="Country of origin")
     user_country: str = Field(..., description="User's location country for food miles calculation")
     language: str = Field(default="English", description="Language for localization")
@@ -147,13 +147,13 @@ def strip_markdown_json(raw_text: str) -> str:
 
 # ==================== EXTERNAL ASYNC FUNCTIONS ====================
 
-async def fetch_product_name(barcode: Optional[str]) -> Optional[str]:
+async def fetch_product_from_off(barcode: Optional[str]) -> tuple[Optional[str], Optional[str]]:
     """
-    Fetch product name from Open Food Facts.
-    Returns product name or None if not found.
+    Fetch product name and ingredients from Open Food Facts.
+    Returns (product_name, ingredients_text) tuple or (None, None) if not found.
     """
     if not barcode:
-        return None
+        return None, None
 
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, headers=OFF_HEADERS) as client:
         try:
@@ -163,19 +163,40 @@ async def fetch_product_name(barcode: Optional[str]) -> Optional[str]:
             if product_response.status_code == 200:
                 product_data = product_response.json()
                 if product_data.get("product"):
+                    product = product_data["product"]
+
                     # Try multiple fields for product name
                     name = (
-                        product_data["product"].get("product_name")
-                        or product_data["product"].get("product_name_en")
-                        or product_data["product"].get("generic_name")
-                        or product_data["product"].get("code")
+                        product.get("product_name")
+                        or product.get("product_name_en")
+                        or product.get("generic_name")
+                        or product.get("code")
                     )
-                    if name:
-                        return name
+
+                    # Try multiple fields for ingredients text
+                    ingredients = (
+                        product.get("ingredients_text")
+                        or product.get("ingredients_text_en")
+                        or product.get("ingredients_text_de")
+                        or product.get("ingredients_text_fr")
+                        or product.get("ingredients_text_es")
+                    )
+
+                    # Fallback: join ingredients_tags if available
+                    if not ingredients and product.get("ingredients_tags"):
+                        ingredients_tags = product["ingredients_tags"]
+                        if isinstance(ingredients_tags, list):
+                            # Remove language prefixes (e.g., "en:sugar" -> "sugar")
+                            cleaned_tags = [tag.split(":", 1)[-1] if ":" in tag else tag for tag in ingredients_tags]
+                            ingredients = ", ".join(cleaned_tags)
+                        elif isinstance(ingredients_tags, str):
+                            ingredients = ingredients_tags
+
+                    return name, ingredients
         except Exception:
             pass
 
-    return None
+    return None, None
 
 
 async def fetch_alternatives(barcode: Optional[str]) -> tuple[List[AlternativeProduct], Optional[str]]:
@@ -415,10 +436,32 @@ async def analyze_product(
     Returns:
         Comprehensive analysis with scores, summaries, and alternatives
     """
-    # Step 1: Get product name for scan history
-    product_name = await fetch_product_name(request.barcode)
-    if not product_name:
-        product_name = "Manual Entry"
+    # Step 1: Fetch product data from Open Food Facts if barcode provided
+    product_name = "Manual Entry"
+    off_front_text = None
+    off_back_text = None
+
+    if request.barcode:
+        off_name, off_ingredients = await fetch_product_from_off(request.barcode)
+        if off_name:
+            product_name = off_name
+
+        # If user provided empty texts but barcode exists, try to use OFF data
+        if (not request.front_text or not request.back_text) and request.barcode:
+            if off_ingredients:
+                off_back_text = off_ingredients
+                # For front text, we can use product name if available
+                off_front_text = off_name or ""
+            else:
+                # Barcode found but no ingredients available - trigger fallback
+                raise HTTPException(
+                    status_code=404,
+                    detail="Product found in Open Food Facts but no ingredients data available. Please scan the product label manually."
+                )
+
+    # Determine final front_text and back_text (prefer user input, fallback to OFF)
+    front_text = request.front_text or off_front_text or ""
+    back_text = request.back_text or off_back_text or ""
 
     # Step 2: Get user ID from authorization token if provided
     user_id = None
@@ -435,26 +478,26 @@ async def analyze_product(
             print(f"Token validation failed: {e}")
 
     # Step 3: Check Supabase for banned additives
-    banned_count, banned_flags = await check_banned_additives(request.back_text)
+    banned_count, banned_flags = await check_banned_additives(back_text)
 
-    # Step 2: Calculate food miles penalty
+    # Step 4: Calculate food miles penalty
     food_miles_penalty = calculate_food_miles_penalty(request.origin_country, request.user_country)
 
-    # Step 3: Fetch alternatives (runs in parallel with LLM)
+    # Step 5: Fetch alternatives (runs in parallel with LLM)
     alternatives_task = fetch_alternatives(request.barcode)
 
-    # Step 4: Call LLM analysis
+    # Step 6: Call LLM analysis
     llm_result = await call_llm_analysis(
-        front_text=request.front_text,
-        back_text=request.back_text,
+        front_text=front_text,
+        back_text=back_text,
         banned_flags=banned_flags,
         language=request.language
     )
 
-    # Step 5: Get alternatives result
+    # Step 7: Get alternatives result
     alternatives, _ = await alternatives_task
 
-    # Step 6: Calculate final score
+    # Step 8: Calculate final score
     base_health_score = llm_result.get("base_health_score", 50)
 
     # Apply zero-tolerance policy for banned additives
@@ -463,7 +506,7 @@ async def analyze_product(
     else:
         final_score = max(0, base_health_score - food_miles_penalty)
 
-    # Step 7: Build response Pydantic models first
+    # Step 9: Build response Pydantic models first
     overall_summary = llm_result.get("overall_summary", "Analysis completed.")
 
     # Build Pydantic models for claims and ingredients
@@ -474,7 +517,7 @@ async def analyze_product(
         IngredientAnalysis(**ingredient) for ingredient in llm_result.get("ingredients_analysis", [])
     ]
 
-    # Step 8: Save to scan_history if user is authenticated
+    # Step 10: Save to scan_history if user is authenticated
     if user_id:
         try:
             # Convert Pydantic models to dicts for Supabase JSONB column
