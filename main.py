@@ -10,7 +10,7 @@ from decimal import Decimal
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from geopy.distance import geodesic
 from geopy.geocoders import Nominatim
@@ -146,6 +146,37 @@ def strip_markdown_json(raw_text: str) -> str:
 
 
 # ==================== EXTERNAL ASYNC FUNCTIONS ====================
+
+async def fetch_product_name(barcode: Optional[str]) -> Optional[str]:
+    """
+    Fetch product name from Open Food Facts.
+    Returns product name or None if not found.
+    """
+    if not barcode:
+        return None
+
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, headers=OFF_HEADERS) as client:
+        try:
+            product_response = await client.get(
+                f"https://world.openfoodfacts.org/api/v0/product/{barcode}.json"
+            )
+            if product_response.status_code == 200:
+                product_data = product_response.json()
+                if product_data.get("product"):
+                    # Try multiple fields for product name
+                    name = (
+                        product_data["product"].get("product_name")
+                        or product_data["product"].get("product_name_en")
+                        or product_data["product"].get("generic_name")
+                        or product_data["product"].get("code")
+                    )
+                    if name:
+                        return name
+        except Exception:
+            pass
+
+    return None
+
 
 async def fetch_alternatives(barcode: Optional[str]) -> tuple[List[AlternativeProduct], Optional[str]]:
     """
@@ -370,17 +401,39 @@ Back label text (ingredients/nutrition): {back_text}"""
 # ==================== API ENDPOINT ====================
 
 @app.post("/analyze", response_model=AnalyzeResponse)
-async def analyze_product(request: AnalyzeRequest) -> AnalyzeResponse:
+async def analyze_product(
+    request: AnalyzeRequest,
+    authorization: Optional[str] = Header(None)
+) -> AnalyzeResponse:
     """
     Analyze a product for sustainability, health, and greenwashing.
 
     Args:
         request: Product data including barcode, label text, origin, and language
+        authorization: Optional Bearer token for user authentication
 
     Returns:
         Comprehensive analysis with scores, summaries, and alternatives
     """
-    # Step 1: Check Supabase for banned additives
+    # Step 1: Get product name for scan history
+    product_name = await fetch_product_name(request.barcode)
+    if not product_name:
+        product_name = "Manual Entry"
+
+    # Step 2: Get user ID from authorization token if provided
+    user_id = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.replace("Bearer ", "")
+        try:
+            # Use Supabase to get user from token
+            user_response = supabase.auth.get_user(token)
+            if user_response and user_response.user:
+                user_id = user_response.user.id
+        except Exception as e:
+            # If token validation fails, continue without user_id
+            print(f"Token validation failed: {e}")
+
+    # Step 3: Check Supabase for banned additives
     banned_count, banned_flags = await check_banned_additives(request.back_text)
 
     # Step 2: Calculate food miles penalty
@@ -410,11 +463,26 @@ async def analyze_product(request: AnalyzeRequest) -> AnalyzeResponse:
         final_score = max(0, base_health_score - food_miles_penalty)
 
     # Step 7: Build response
+    overall_summary = llm_result.get("overall_summary", "Analysis completed.")
+
+    # Step 8: Save to scan_history if user is authenticated
+    if user_id:
+        try:
+            supabase.table("scan_history").insert({
+                "user_id": user_id,
+                "product_name": product_name,
+                "final_score": final_score,
+                "overall_summary": overall_summary
+            }).execute()
+        except Exception as e:
+            # Log error but don't fail the request
+            print(f"Failed to save to scan_history: {e}")
+
     return AnalyzeResponse(
         final_score=final_score,
         base_health_score=base_health_score,
         food_miles_penalty=food_miles_penalty,
-        overall_summary=llm_result.get("overall_summary", "Analysis completed."),
+        overall_summary=overall_summary,
         claims_analysis=[
             ClaimAnalysis(**claim) for claim in llm_result.get("claims_analysis", [])
         ],
